@@ -1,0 +1,38 @@
+buildscript {
+  repositories { jcenter() }
+  dependencies {
+    classpath 'com.github.jengelman.gradle.plugins:shadow:1.0.3'
+  }
+}
+
+apply plugin: 'java'
+apply plugin: 'com.github.johnrengelman.shadow'
+
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+	compile 'org.bouncycastle:bcprov-jdk15on:1.52'
+}
+
+sourceSets {
+    main {
+        java {
+            srcDir 'src'
+        }
+    }
+}
+
+shadowJar {
+	baseName = "ksdecryptor"
+}
+
+jar {
+	manifest {
+        attributes("Main-Class": "org.nick.ksdecryptor.Main")
+    }
+}
+
+defaultTasks 'shadowJar'

@@ -1,8 +1,8 @@
 Android key blob decryptor
 ==========================
 
-This tools decrypts Android keystore key and certificate blobs, given 
-the .masterkey file and the device's PIN or password. Key blobs that 
+This tool decrypts Android keystore key and certificate blobs, given 
+the ```.masterkey``` file and the device's PIN or password. Key blobs that 
 are protected by a hardware-backed key cannot be decrypted. 
 
 The tool supports Android M keymaster v1.0 blobs, encrypted with the 

@@ -8,10 +8,12 @@ import org.bouncycastle.crypto.modes.OCBBlockCipher;
 import org.bouncycastle.crypto.params.AEADParameters;
 import org.bouncycastle.crypto.params.KeyParameter;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
+import java.security.PrivateKey;
 import java.util.Arrays;
 
 import javax.crypto.Cipher;
@@ -32,63 +34,67 @@ public class Keymaster1Blob {
     private Keymaster1Blob() {
     }
 
-    public static Keymaster1Blob parse(byte[] blob, SecretKey masterKey)
-            throws GeneralSecurityException,
-            InvalidCipherTextException {
-        Keymaster1Blob result = new Keymaster1Blob();
+    public static Keymaster1Blob parse(byte[] blob, SecretKey masterKey) {
+        try {
+            Keymaster1Blob result = new Keymaster1Blob();
 
-        ByteBuffer bb = ByteBuffer.wrap(blob);
-        bb.order(ByteOrder.LITTLE_ENDIAN);
-        int idx = 0;
-        result.version = bb.get(idx);
-        idx++;
-        int nonceLength = bb.getInt(idx);
-        idx += INT_SIZE;
-        byte[] nonce = Arrays.copyOfRange(blob, idx, idx + nonceLength);
-        idx = idx + nonceLength;
-        int keyMaterialLength = bb.getInt(idx);
-        idx += INT_SIZE;
-        byte[] keyMaterial = Arrays.copyOfRange(blob, idx, idx + keyMaterialLength);
-        idx = idx + keyMaterialLength;
-        int tagLength = bb.getInt(idx);
-        idx += INT_SIZE;
-        byte[] tag = Arrays.copyOfRange(blob, idx, idx + tagLength);
+            ByteBuffer bb = ByteBuffer.wrap(blob);
+            bb.order(ByteOrder.LITTLE_ENDIAN);
+            int idx = 0;
+            result.version = bb.get(idx);
+            idx++;
+            int nonceLength = bb.getInt(idx);
+            idx += INT_SIZE;
+            byte[] nonce = Arrays.copyOfRange(blob, idx, idx + nonceLength);
+            idx = idx + nonceLength;
+            int keyMaterialLength = bb.getInt(idx);
+            idx += INT_SIZE;
+            byte[] keyMaterial = Arrays.copyOfRange(blob, idx, idx + keyMaterialLength);
+            idx = idx + keyMaterialLength;
+            int tagLength = bb.getInt(idx);
+            idx += INT_SIZE;
+            byte[] tag = Arrays.copyOfRange(blob, idx, idx + tagLength);
 
-        byte[] cipher = new byte[keyMaterial.length + tag.length];
-        System.arraycopy(keyMaterial, 0, cipher, 0, keyMaterial.length);
-        System.arraycopy(tag, 0, cipher, keyMaterial.length, tag.length);
+            byte[] cipher = new byte[keyMaterial.length + tag.length];
+            System.arraycopy(keyMaterial, 0, cipher, 0, keyMaterial.length);
+            System.arraycopy(tag, 0, cipher, keyMaterial.length, tag.length);
 
-        idx = idx + tagLength;
-        // enforced + unenforced
-        byte[] authorizations = Arrays.copyOfRange(blob, idx, blob.length);
+            idx = idx + tagLength;
+            // enforced + unenforced
+            byte[] authorizations = Arrays.copyOfRange(blob, idx, blob.length);
 
-        // hidden + enforced + unenforced
-        byte[] dd = createDerivationData(authorizations);
-        int off = 0;
-        result.hiddenAuthorizations = AuthorizationSet.parse(dd, off);
-        off += result.hiddenAuthorizations.getSerializedSize();
-        result.enforcedAuthorizations = AuthorizationSet.parse(dd, off);
-        off += result.enforcedAuthorizations.getSerializedSize();
-        result.unenforcedAuthorizations = AuthorizationSet.parse(dd, off);
+            // hidden + enforced + unenforced
+            byte[] dd = createDerivationData(authorizations);
+            int off = 0;
+            result.hiddenAuthorizations = AuthorizationSet.parse(dd, off);
+            off += result.hiddenAuthorizations.getSerializedSize();
+            result.enforcedAuthorizations = AuthorizationSet.parse(dd, off);
+            off += result.enforcedAuthorizations.getSerializedSize();
+            result.unenforcedAuthorizations = AuthorizationSet.parse(dd, off);
 
-        SecretKey key = deriveKey(dd, masterKey);
+            SecretKey key = deriveKey(dd, masterKey);
 
-        KeyParameter keyParameter = new KeyParameter(key.getEncoded());
-        int macLengthBits = tagLength * 8;
-        AEADParameters parameters = new AEADParameters(keyParameter,
-                macLengthBits, nonce);
+            KeyParameter keyParameter = new KeyParameter(key.getEncoded());
+            int macLengthBits = tagLength * 8;
+            AEADParameters parameters = new AEADParameters(keyParameter,
+                    macLengthBits, nonce);
 
-        AEADBlockCipher ocbCipher = createOCBCipher(false, parameters);
-        byte[] decrypted = new byte[ocbCipher.getOutputSize(cipher.length)];
-        int len = ocbCipher.processBytes(cipher, 0, cipher.length, decrypted, 0);
-        len += ocbCipher.doFinal(decrypted, len);
-        byte[] mac = ocbCipher.getMac();
-        if (!Arrays.equals(tag, mac)) {
-            throw new IllegalStateException("MAC doesn't match. Corrupt blob?");
+            AEADBlockCipher ocbCipher = createOCBCipher(false, parameters);
+            byte[] decrypted = new byte[ocbCipher.getOutputSize(cipher.length)];
+            int len = ocbCipher.processBytes(cipher, 0, cipher.length, decrypted, 0);
+            len += ocbCipher.doFinal(decrypted, len);
+            byte[] mac = ocbCipher.getMac();
+            if (!Arrays.equals(tag, mac)) {
+                throw new IllegalStateException("MAC doesn't match. Corrupt blob?");
+            }
+            result.keyMaterial = decrypted;
+
+            return result;
+        } catch (GeneralSecurityException e) {
+            throw new RuntimeException(e);
+        } catch (InvalidCipherTextException e) {
+            throw new RuntimeException(e);
         }
-        result.keyMaterial = decrypted;
-
-        return result;
     }
 
     private static SecretKey deriveKey(byte[] dd, SecretKey masterKey)
@@ -162,12 +168,43 @@ public class Keymaster1Blob {
         return unenforcedAuthorizations.getKeySize();
     }
 
-    public String getKeyAlgorithm() {
+    public String getKeyAlgorithmName() {
+        if (enforcedAuthorizations.containsTag(AuthorizationSet.TAG_ALGORITHM)) {
+            return enforcedAuthorizations.getKeyAlgorithmName();
+        }
+
+        return unenforcedAuthorizations.getKeyAlgorithmName();
+    }
+
+    public int getKeyAlgorithm() {
         if (enforcedAuthorizations.containsTag(AuthorizationSet.TAG_ALGORITHM)) {
             return enforcedAuthorizations.getKeyAlgorithm();
         }
 
         return unenforcedAuthorizations.getKeyAlgorithm();
+    }
+
+    public PrivateKey getPrivateKey() {
+        try {
+            int keyAlg = getKeyAlgorithm();
+            if (keyAlg == AuthorizationSet.ALGORITHM_EC) {
+                return SoftKeymasterBlob.parseEcKey(getKeyMaterial());
+            } else if (keyAlg == AuthorizationSet.ALGORITHM_RSA) {
+                return SoftKeymasterBlob.parseRsaKey(getKeyMaterial());
+            } else {
+                throw new IllegalStateException("Not an asymmetric key: " + getKeyAlgorithmName());
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        } catch (GeneralSecurityException e) {
+            throw new RuntimeException(e);
+        } catch (InvalidCipherTextException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public SecretKey getSecretKey() {
+        return new SecretKeySpec(getKeyMaterial(), getKeyAlgorithmName());
     }
 
 }

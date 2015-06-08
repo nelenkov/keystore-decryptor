@@ -1,22 +1,22 @@
 
 package org.nick.ksdecryptor;
 
-import org.bouncycastle.asn1.ASN1InputStream;
-import org.bouncycastle.asn1.sec.ECPrivateKey;
-import org.bouncycastle.crypto.InvalidCipherTextException;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.jce.spec.ECNamedCurveSpec;
 import org.bouncycastle.util.encoders.Hex;
 
-import java.io.ByteArrayInputStream;
+import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.security.GeneralSecurityException;
+import java.security.PrivateKey;
 import java.security.Security;
-import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.security.interfaces.DSAPrivateKey;
+import java.security.interfaces.RSAPrivateKey;
 
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
@@ -39,9 +39,10 @@ public class Main {
         String password = args[2];
 
         byte[] mkBlob = readBlob(mkFile);
-        KeystoreBlob masterKeyBlob = KeystoreBlob.parseMasterKey(mkBlob, password);
+        KeystoreBlob masterKeyBlob = KeystoreBlob.parseMasterKey(mkBlob,
+                password);
         showBlob(masterKeyBlob);
-        SecretKey masterKey = new SecretKeySpec(masterKeyBlob.getValue(), "AES");
+        SecretKey masterKey = masterKeyBlob.getMasterKey();
 
         byte[] blob = readBlob(keyBlobFile);
         KeystoreBlob keyBlob = KeystoreBlob.parse(blob, masterKey);
@@ -69,7 +70,7 @@ public class Main {
     }
 
     private static void showCert(KeystoreBlob ksBlob) throws GeneralSecurityException {
-        X509Certificate cert = parseCert(ksBlob.getValue());
+        X509Certificate cert = ksBlob.getCertificate();
         System.out.println("X509Certificate:");
         System.out.println("  issuer: " + cert.getIssuerDN());
         System.out.println("  subject: " + cert.getSubjectDN());
@@ -78,53 +79,75 @@ public class Main {
     }
 
     private static void showKeyPair(KeystoreBlob ksBlob) throws Exception {
-        ByteBuffer bb = ByteBuffer.wrap(ksBlob.getValue());
-        bb.order(ByteOrder.LITTLE_ENDIAN);
-        int magic = bb.getInt();
-        if (magic == QcomKeyBlob.KM_MAGIC_NUM) {
-            QcomKeyBlob qcKeyBlob = QcomKeyBlob.parse(ksBlob.getValue());
-            System.out.println(qcKeyBlob.toString());
-            System.out.println();
-        } else {
-            // most probably an EC key
-            try {
-                showEcKey(ksBlob);
-            } catch (IOException e) {
-                System.out.println("Unknown key pair format");
+        try {
+            byte[] blob = ksBlob.getValue();
+            ByteBuffer bb = ByteBuffer.wrap(ksBlob.getValue());
+            bb.order(ByteOrder.LITTLE_ENDIAN);
+            int magic = bb.getInt();
+            if (magic == QcomKeyBlob.KM_MAGIC_NUM) {
+                QcomKeyBlob qcKeyBlob = QcomKeyBlob.parse(ksBlob.getValue());
+                System.out.println(qcKeyBlob.toString());
+                System.out.println();
+            } else if (magic == SoftKeymasterBlob.SOFT_KM_MAGIC_LE) {
+                SoftKeymasterBlob softKmBlob = SoftKeymasterBlob
+                        .parse(blob);
+                showJcaPrivateKey(softKmBlob.getPrivateKey());
+            } else {
+                // most probably keymaster v1 RSA or EC key
+                Keymaster1Blob km1b = Keymaster1Blob.parse(ksBlob.getValue(), ZERO_KEY);
+                PrivateKey pk = km1b.getPrivateKey();
+                showJcaPrivateKey(pk);
+                System.out.printf("key size: %d\n", km1b.getKeySize());
+                System.out.printf("key algorithm: %s\n", km1b.getKeyAlgorithm());
+                km1b.dumpAuthorizations();
             }
+        } catch (Exception e) {
+            System.out.println("Unknown key pair format");
+            e.printStackTrace();
         }
     }
 
-    private static void showEcKey(KeystoreBlob ksBlob) throws GeneralSecurityException,
-            IOException, InvalidCipherTextException {
-        Keymaster1Blob km1b = Keymaster1Blob.parse(ksBlob.getValue(), ZERO_KEY);
-        ASN1InputStream ain = new ASN1InputStream(new ByteArrayInputStream(
-                km1b.getKeyMaterial()));
-        ECPrivateKey pk = ECPrivateKey.getInstance(ain.readObject());
-        ain.close();
-
-        System.out.println("EC key:");
-        System.out.printf("  s: %s (%d)\n",
-                pk.getKey().toString(16).substring(0, 32),
-                pk.getKey().bitLength());
-        System.out.printf("  params: %s\n", pk.getParameters());
-        System.out.printf("  key size: %d\n", km1b.getKeySize());
-        System.out.printf("  key algorithm: %s\n", km1b.getKeyAlgorithm());
-        System.out.printf("  authorizations:\n");
-        km1b.dumpAuthorizations();
-        System.out.println();
+    private static void showJcaPrivateKey(PrivateKey pk) {
+        if (pk instanceof RSAPrivateKey) {
+            RSAPrivateKey rsaPrivKey = (RSAPrivateKey) pk;
+            System.out.printf("RSA private exponent: %s (%d)\n",
+                    rsaPrivKey.getPrivateExponent().toString(16).substring(0, 32), rsaPrivKey
+                            .getPrivateExponent().bitLength());
+            System.out.printf("RSA modulus: %s... (%d)\n", rsaPrivKey.getModulus().toString(16)
+                    .substring(0, 32),
+                    rsaPrivKey.getModulus().bitLength());
+        } else if (pk instanceof java.security.interfaces.ECPrivateKey) {
+            java.security.interfaces.ECPrivateKey ecPrivKey = (java.security.interfaces.ECPrivateKey) pk;
+            System.out.printf("EC S: %s... (%d)\n",
+                    ecPrivKey.getS().toString(16).substring(0, 32),
+                    ecPrivKey.getS().bitLength());
+            if (ecPrivKey.getParams() instanceof ECNamedCurveSpec) {
+                ECNamedCurveSpec namedCurveSpec = (ECNamedCurveSpec) ecPrivKey.getParams();
+                System.out.println("curve name: " + namedCurveSpec.getName());
+            } else {
+                System.out.println("EC params: " + ecPrivKey.getParams());
+            }
+        } else if (pk instanceof DSAPrivateKey) {
+            DSAPrivateKey dsaPrivKey = (DSAPrivateKey) pk;
+            System.out.printf("DSA X: %s... (%d)\n",
+                    dsaPrivKey.getX().toString(16).substring(0, 32), dsaPrivKey.getX()
+                            .bitLength());
+            System.out.println("DSA params: " + dsaPrivKey.getParams());
+        } else {
+            System.out.println("Unknown private key type: " + pk.getClass().getName());
+        }
     }
 
     private static void showMasterKey(KeystoreBlob ksBlob) {
-        System.out.println("master key: " + Hex.toHexString(ksBlob.getValue()));
+        System.out.println("master key: " + Hex.toHexString(ksBlob.getMasterKey().getEncoded()));
         System.out.println();
     }
 
-    private static void showKeyMaterial(KeystoreBlob ksBlob) throws Exception {
+    private static void showKeyMaterial(KeystoreBlob ksBlob) {
         Keymaster1Blob km1b = Keymaster1Blob.parse(ksBlob.getValue(), ZERO_KEY);
         System.out.println("Keymaster v1 blob:");
         System.out.printf("  key size: %d\n", km1b.getKeySize());
-        System.out.printf("  key algorithm: %s\n", km1b.getKeyAlgorithm());
+        System.out.printf("  key algorithm: %s\n", km1b.getKeyAlgorithmName());
         System.out.println("  key material: " + Hex.toHexString(km1b.getKeyMaterial()));
         System.out.println("  authorizations:\n");
         km1b.dumpAuthorizations();
@@ -137,6 +160,9 @@ public class Main {
         fis.read(result);
         fis.close();
 
+        File f = new File(filename);
+        System.out.printf("Read '%s'\n", f.getName());
+
         return result;
     }
 
@@ -146,12 +172,6 @@ public class Main {
         fos.write(blob);
         fos.flush();
         fos.close();
-    }
-
-    private static X509Certificate parseCert(byte[] certBytes) throws GeneralSecurityException {
-        CertificateFactory cf = CertificateFactory.getInstance("X.509");
-
-        return (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(certBytes));
     }
 
 }

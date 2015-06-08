@@ -266,7 +266,15 @@ public class AuthorizationSet {
         return -1;
     }
 
-    public String getKeyAlgorithm() {
+    public int getKeyAlgorithm() {
+        if (tags.containsKey(TAG_ALGORITHM)) {
+            return (Integer) tags.get(TAG_ALGORITHM);
+        }
+
+        return -1;
+    }
+
+    public String getKeyAlgorithmName() {
         if (tags.containsKey(TAG_ALGORITHM)) {
             int alg = (Integer) tags.get(TAG_ALGORITHM);
             switch (alg) {

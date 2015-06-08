@@ -1,9 +1,12 @@
 
 package org.nick.ksdecryptor;
 
+import java.io.ByteArrayInputStream;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.KeySpec;
 import java.util.Arrays;
@@ -61,65 +64,24 @@ public class KeystoreBlob {
     private KeystoreBlob() {
     }
 
-    public static KeystoreBlob parseMasterKey(byte[] blob, String password)
-            throws GeneralSecurityException {
-        KeystoreBlob result = new KeystoreBlob();
+    public static KeystoreBlob parseMasterKey(byte[] blob, String password) {
+        try {
+            KeystoreBlob result = new KeystoreBlob();
 
-        int idx = 0;
-        result.version = blob[idx++];
-        result.type = blob[idx++];
-        result.flags = blob[idx++];
-        result.info = blob[idx++];
+            int idx = 0;
+            result.version = blob[idx++];
+            result.type = blob[idx++];
+            result.flags = blob[idx++];
+            result.info = blob[idx++];
 
-        byte[] iv = Arrays.copyOfRange(blob, idx, idx + AES_BLOCK_SIZE);
-        idx = idx + AES_BLOCK_SIZE;
+            byte[] iv = Arrays.copyOfRange(blob, idx, idx + AES_BLOCK_SIZE);
+            idx = idx + AES_BLOCK_SIZE;
 
-        byte[] encrypted = Arrays.copyOfRange(blob, idx, blob.length - result.info);
+            byte[] encrypted = Arrays.copyOfRange(blob, idx, blob.length - result.info);
 
-        byte[] salt = Arrays.copyOfRange(blob, blob.length - SALT_SIZE, blob.length);
-        SecretKey kek = generateKek(password, salt);
-        result.decrypted = decrypt(iv, encrypted, kek);
-
-        MessageDigest md = MessageDigest.getInstance("MD5");
-        byte[] digested = Arrays.copyOfRange(result.decrypted, MD5_DIGEST_LENGTH,
-                result.decrypted.length);
-        byte[] calcMd5 = md.digest(digested);
-
-        idx = 0;
-        byte[] digest = Arrays.copyOfRange(result.decrypted, idx, idx + MD5_DIGEST_LENGTH);
-        if (!Arrays.equals(calcMd5, digest)) {
-            throw new IllegalStateException("Digest doesn't match. Invalid key blob?");
-        }
-
-        idx = idx + MD5_DIGEST_LENGTH;
-        result.length = readInt(result.decrypted, idx);
-
-        idx = idx + 4;
-        result.value = Arrays.copyOfRange(result.decrypted, idx, idx + result.length);
-
-        idx = idx + result.length;
-        result.description = Arrays.copyOfRange(result.decrypted, idx, idx + result.info);
-
-        return result;
-    }
-
-    public static KeystoreBlob parse(byte[] blob, SecretKey masterKey)
-            throws GeneralSecurityException {
-        KeystoreBlob result = new KeystoreBlob();
-
-        int idx = 0;
-        result.version = blob[idx++];
-        result.type = blob[idx++];
-        result.flags = blob[idx++];
-        result.info = blob[idx++];
-
-        byte[] iv = Arrays.copyOfRange(blob, idx, idx + AES_BLOCK_SIZE);
-        idx = idx + AES_BLOCK_SIZE;
-
-        byte[] encrypted = Arrays.copyOfRange(blob, idx, blob.length - result.info);
-
-        if (result.isEncrypted()) {
-            result.decrypted = decrypt(iv, encrypted, masterKey);
+            byte[] salt = Arrays.copyOfRange(blob, blob.length - SALT_SIZE, blob.length);
+            SecretKey kek = generateKek(password, salt);
+            result.decrypted = decrypt(iv, encrypted, kek);
 
             MessageDigest md = MessageDigest.getInstance("MD5");
             byte[] digested = Arrays.copyOfRange(result.decrypted, MD5_DIGEST_LENGTH,
@@ -129,23 +91,71 @@ public class KeystoreBlob {
             idx = 0;
             byte[] digest = Arrays.copyOfRange(result.decrypted, idx, idx + MD5_DIGEST_LENGTH);
             if (!Arrays.equals(calcMd5, digest)) {
-                throw new IllegalStateException("Digest doesn't match. Invalid key blob?");
+                // throw new
+                // IllegalStateException("Digest doesn't match. Invalid key blob?");
             }
-        } else {
-            result.decrypted = encrypted;
-            idx = 0;
+
+            idx = idx + MD5_DIGEST_LENGTH;
+            result.length = readInt(result.decrypted, idx);
+
+            idx = idx + 4;
+            result.value = Arrays.copyOfRange(result.decrypted, idx, idx + result.length);
+
+            idx = idx + result.length;
+            result.description = Arrays.copyOfRange(result.decrypted, idx, idx + result.info);
+
+            return result;
+        } catch (GeneralSecurityException e) {
+            throw new RuntimeException(e);
         }
+    }
 
-        idx = idx + MD5_DIGEST_LENGTH;
-        result.length = readInt(result.decrypted, idx);
+    public static KeystoreBlob parse(byte[] blob, SecretKey masterKey) {
+        try {
+            KeystoreBlob result = new KeystoreBlob();
 
-        idx = idx + 4;
-        result.value = Arrays.copyOfRange(result.decrypted, idx, idx + result.length);
+            int idx = 0;
+            result.version = blob[idx++];
+            result.type = blob[idx++];
+            result.flags = blob[idx++];
+            result.info = blob[idx++];
 
-        idx = idx + result.length;
-        result.description = Arrays.copyOfRange(result.decrypted, idx, idx + result.info);
+            byte[] iv = Arrays.copyOfRange(blob, idx, idx + AES_BLOCK_SIZE);
+            idx = idx + AES_BLOCK_SIZE;
 
-        return result;
+            byte[] encrypted = Arrays.copyOfRange(blob, idx, blob.length - result.info);
+
+            if (result.isEncrypted()) {
+                result.decrypted = decrypt(iv, encrypted, masterKey);
+
+                MessageDigest md = MessageDigest.getInstance("MD5");
+                byte[] digested = Arrays.copyOfRange(result.decrypted, MD5_DIGEST_LENGTH,
+                        result.decrypted.length);
+                byte[] calcMd5 = md.digest(digested);
+
+                idx = 0;
+                byte[] digest = Arrays.copyOfRange(result.decrypted, idx, idx + MD5_DIGEST_LENGTH);
+                if (!Arrays.equals(calcMd5, digest)) {
+                    throw new IllegalStateException("Digest doesn't match. Invalid key blob?");
+                }
+            } else {
+                result.decrypted = encrypted;
+                idx = 0;
+            }
+
+            idx = idx + MD5_DIGEST_LENGTH;
+            result.length = readInt(result.decrypted, idx);
+
+            idx = idx + 4;
+            result.value = Arrays.copyOfRange(result.decrypted, idx, idx + result.length);
+
+            idx = idx + result.length;
+            result.description = Arrays.copyOfRange(result.decrypted, idx, idx + result.info);
+
+            return result;
+        } catch (GeneralSecurityException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private static int readInt(byte[] data, int idx) {
@@ -223,6 +233,32 @@ public class KeystoreBlob {
 
     public boolean isEncrypted() {
         return (flags & KEYSTORE_FLAG_ENCRYPTED) == KEYSTORE_FLAG_ENCRYPTED;
+    }
+
+    public SecretKey getMasterKey() {
+        if (type != KEY_BLOB_TYPE_MASTER_KEY || value.length != AES_BLOCK_SIZE) {
+            throw new IllegalStateException("Not a master key blob, type is :" + type);
+        }
+
+        return new SecretKeySpec(getValue(), "AES");
+    }
+
+    private static X509Certificate parseCert(byte[] certBytes) {
+        try {
+            CertificateFactory cf = CertificateFactory.getInstance("X.509");
+
+            return (X509Certificate) cf.generateCertificate(new ByteArrayInputStream(certBytes));
+        } catch (GeneralSecurityException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public X509Certificate getCertificate() {
+        if (type != KEY_BLOB_TYPE_GENERIC) {
+            throw new IllegalStateException("Not a certificate blob, type is :" + type);
+        }
+
+        return parseCert(getValue());
     }
 
 }

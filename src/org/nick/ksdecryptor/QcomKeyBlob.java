@@ -6,6 +6,10 @@ import org.bouncycastle.util.encoders.Hex;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.security.GeneralSecurityException;
+import java.security.KeyFactory;
+import java.security.interfaces.RSAPublicKey;
+import java.security.spec.RSAPublicKeySpec;
 import java.util.Arrays;
 
 //#define KM_MAGIC_NUM     (0x4B4D4B42)    /* "KMKB" Key Master Key Blob in hex */
@@ -41,6 +45,8 @@ public class QcomKeyBlob {
     private byte[] iv;
     private byte[] encryptedPrivateExponent;
     private byte[] hmac;
+
+    private RSAPublicKey rsaPublicKey;
 
     private QcomKeyBlob() {
     }
@@ -80,7 +86,19 @@ public class QcomKeyBlob {
                 + privExpSize);
         result.hmac = Arrays.copyOfRange(blob, idx, idx + KM_HMAC_LENGTH);
 
+        result.createPublicKey();
+
         return result;
+    }
+
+    private void createPublicKey() {
+        try {
+            RSAPublicKeySpec keySpec = new RSAPublicKeySpec(modulus, publicExponent);
+            KeyFactory kf = KeyFactory.getInstance("RSA");
+            rsaPublicKey = (RSAPublicKey) kf.generatePublic(keySpec);
+        } catch (GeneralSecurityException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     public int getMagic() {
@@ -109,6 +127,10 @@ public class QcomKeyBlob {
 
     public byte[] getHmac() {
         return hmac == null ? null : hmac.clone();
+    }
+
+    public RSAPublicKey getRsaPublicKey() {
+        return rsaPublicKey;
     }
 
     @Override

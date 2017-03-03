@@ -4,11 +4,14 @@ package org.nick.ksdecryptor;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.jce.spec.ECNamedCurveSpec;
 import org.bouncycastle.util.encoders.Hex;
+import org.bouncycastle.util.io.pem.PemObject;
+import org.bouncycastle.util.io.pem.PemWriter;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.StringWriter;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.security.GeneralSecurityException;
@@ -69,13 +72,17 @@ public class Main {
         }
     }
 
-    private static void showCert(KeystoreBlob ksBlob) throws GeneralSecurityException {
+    private static void showCert(KeystoreBlob ksBlob) throws Exception {
         X509Certificate cert = ksBlob.getCertificate();
-        System.out.println("X509Certificate:");
-        System.out.println("  issuer: " + cert.getIssuerDN());
-        System.out.println("  subject: " + cert.getSubjectDN());
-        System.out.println("  serial: " + cert.getSerialNumber());
-        System.out.println();
+        PemObject certPem = new PemObject("CERTIFICATE", cert.getEncoded());
+        StringWriter sw = new StringWriter();
+        PemWriter pemWriter = new PemWriter(sw);
+        try {
+            pemWriter.writeObject(certPem);
+        } finally {
+            pemWriter.close();
+        }
+        System.out.println(sw.toString());
     }
 
     private static void showKeyPair(KeystoreBlob ksBlob) throws Exception {
@@ -107,15 +114,18 @@ public class Main {
         }
     }
 
-    private static void showJcaPrivateKey(PrivateKey pk) {
+    private static void showJcaPrivateKey(PrivateKey pk) throws Exception {
         if (pk instanceof RSAPrivateKey) {
             RSAPrivateKey rsaPrivKey = (RSAPrivateKey) pk;
-            System.out.printf("RSA private exponent: %s (%d)\n",
-                    rsaPrivKey.getPrivateExponent().toString(16).substring(0, 32), rsaPrivKey
-                            .getPrivateExponent().bitLength());
-            System.out.printf("RSA modulus: %s... (%d)\n", rsaPrivKey.getModulus().toString(16)
-                    .substring(0, 32),
-                    rsaPrivKey.getModulus().bitLength());
+            PemObject rsaPem = new PemObject("RSA PRIVATE KEY", rsaPrivKey.getEncoded());
+            StringWriter sw = new StringWriter();
+            PemWriter pemWriter = new PemWriter(sw);
+            try {
+                pemWriter.writeObject(rsaPem);
+            } finally {
+                pemWriter.close();
+            }
+            System.out.println(sw.toString());
         } else if (pk instanceof java.security.interfaces.ECPrivateKey) {
             java.security.interfaces.ECPrivateKey ecPrivKey = (java.security.interfaces.ECPrivateKey) pk;
             System.out.printf("EC S: %s... (%d)\n",

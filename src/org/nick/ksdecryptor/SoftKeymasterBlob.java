@@ -27,6 +27,7 @@ import java.security.spec.DSAPublicKeySpec;
 import java.security.spec.ECParameterSpec;
 import java.security.spec.ECPrivateKeySpec;
 import java.security.spec.RSAPrivateKeySpec;
+import java.security.spec.RSAPrivateCrtKeySpec;
 import java.security.spec.RSAPublicKeySpec;
 
 public class SoftKeymasterBlob {
@@ -208,9 +209,15 @@ public class SoftKeymasterBlob {
     private static RSAPrivateKey toJcaPrivateKey(
             org.bouncycastle.asn1.pkcs.RSAPrivateKey rsaPrivateKey)
             throws GeneralSecurityException {
-        RSAPrivateKeySpec spec = new RSAPrivateKeySpec(rsaPrivateKey.getModulus(),
-                rsaPrivateKey.getPrivateExponent());
-        KeyFactory kf = KeyFactory.getInstance("RSA");
+        RSAPrivateCrtKeySpec spec = new RSAPrivateCrtKeySpec(rsaPrivateKey.getModulus(),
+                                                             rsaPrivateKey.getPublicExponent(),
+                                                             rsaPrivateKey.getPrivateExponent(),
+                                                             rsaPrivateKey.getPrime1(),
+                                                             rsaPrivateKey.getPrime2(),
+                                                             rsaPrivateKey.getExponent1(),
+                                                             rsaPrivateKey.getExponent2(),
+                                                             rsaPrivateKey.getCoefficient());
+        KeyFactory kf = KeyFactory.getInstance("RSA", "BC");
         RSAPrivateKey privateKey = (RSAPrivateKey) kf.generatePrivate(spec);
 
         return privateKey;
